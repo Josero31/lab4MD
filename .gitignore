@@ -47,3 +47,9 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Claude
+.claude/
+
+# Scripts auxiliares
+limpiar_listings.R
