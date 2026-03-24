@@ -1,0 +1,259 @@
+---
+title: "Lab 4 - Árboles de Regresión"
+author: "Jose Sanchez, Roberto Najera y Andre Pivaral"
+date: "2026-03-24"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 9, fig.height = 5)
+knitr::opts_knit$set(root.dir = "C:/Users/jrss3/OneDrive/Escritorio/1ER Semestre 2026/Mineria de Datos/lab4MD")
+```
+
+# Introducción
+
+SmartStay Advisors es una firma intermediaria que facilita la búsqueda y selección de propiedades en Airbnb para clientes corporativos y particulares. El objetivo de este laboratorio es construir un **árbol de regresión** para predecir el precio por noche de las propiedades, usando los mismos conjuntos de entrenamiento y prueba del laboratorio anterior (regresión lineal), y comparar su desempeño.
+
+# Actividad 1: Conjuntos de Entrenamiento y Prueba
+
+Se utilizan exactamente los mismos datos, semilla y partición que en el laboratorio anterior para garantizar comparabilidad entre modelos.
+
+```{r carga-librerias}
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(scales)
+library(knitr)
+```
+
+```{r carga-datos}
+load("C:/Users/jrss3/OneDrive/Escritorio/1ER Semestre 2026/Mineria de Datos/lab3MD/listings.RData")
+
+# Misma limpieza que lab 3
+listings <- listings %>%
+  mutate(price_num = as.numeric(gsub("[$,]", "", price)))
+
+p1  <- quantile(listings$price_num, 0.01, na.rm = TRUE)
+p99 <- quantile(listings$price_num, 0.99, na.rm = TRUE)
+
+listings_clean <- listings %>%
+  filter(!is.na(price_num),
+         price_num >= p1, price_num <= p99,
+         !is.na(review_scores_rating),
+         !is.na(bedrooms),
+         !is.na(accommodates))
+```
+
+```{r split}
+set.seed(123)   # misma semilla que lab 3
+
+datos_modelo <- listings_clean %>%
+  select(price_num, accommodates, bedrooms, beds,
+         review_scores_rating, reviews_per_month,
+         minimum_nights, availability_365) %>%
+  drop_na()
+
+n           <- nrow(datos_modelo)
+train_index <- sample(seq_len(n), size = 0.8 * n)
+
+train_data <- datos_modelo[train_index, ]
+test_data  <- datos_modelo[-train_index, ]
+
+cat("Filas entrenamiento:", nrow(train_data), "\n")
+cat("Filas prueba:       ", nrow(test_data),  "\n")
+```
+
+Los conjuntos de datos reproducen exactamente la partición usada en el laboratorio anterior (semilla `123`, 80 % entrenamiento / 20 % prueba).
+
+---
+
+# Actividad 2: Árbol de Regresión
+
+Se construye un árbol de regresión con `rpart` usando todas las variables disponibles del dataset de modelado. El parámetro `cp = 0.001` permite que el árbol crezca con suficiente detalle antes de podarlo.
+
+```{r arbol-construccion}
+set.seed(123)
+
+arbol_reg <- rpart(
+  price_num ~ .,
+  data    = train_data,
+  method  = "anova",
+  control = rpart.control(
+    cp      = 0.001,   # complejidad mínima para dividir
+    minsplit = 20,     # mínimo de observaciones para dividir un nodo
+    maxdepth = 6       # profundidad máxima del árbol
+  )
+)
+```
+
+## Poda del árbol (selección de cp óptimo)
+
+Para evitar sobreajuste se selecciona el valor de `cp` que minimiza el error de validación cruzada.
+
+```{r poda}
+# Tabla de complejidad
+printcp(arbol_reg)
+
+# cp óptimo: el que minimiza xerror
+cp_optimo <- arbol_reg$cptable[which.min(arbol_reg$cptable[, "xerror"]), "CP"]
+cat("\ncp óptimo:", round(cp_optimo, 6), "\n")
+
+# Podar el árbol
+arbol_podado <- prune(arbol_reg, cp = cp_optimo)
+```
+
+## Visualización del árbol
+
+```{r visualizacion-arbol, fig.height=7, fig.width=11}
+rpart.plot(
+  arbol_podado,
+  type    = 4,
+  extra   = 101,
+  under   = TRUE,
+  fallen.leaves = TRUE,
+  main    = "Árbol de Regresión – Precio por Noche (USD)",
+  cex     = 0.7,
+  box.palette = "Blues"
+)
+```
+
+## Importancia de variables
+
+```{r importancia-variables, fig.height=4}
+importancia <- as.data.frame(arbol_podado$variable.importance)
+importancia <- data.frame(
+  variable    = rownames(importancia),
+  importancia = importancia[, 1]
+) %>%
+  arrange(desc(importancia)) %>%
+  mutate(importancia_rel = round(importancia / sum(importancia) * 100, 1))
+
+kable(importancia,
+      col.names = c("Variable", "Importancia absoluta", "Importancia relativa (%)"),
+      caption   = "Importancia de variables en el árbol de regresión")
+
+ggplot(importancia, aes(x = reorder(variable, importancia_rel), y = importancia_rel,
+                        fill = importancia_rel)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = paste0(importancia_rel, "%")), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  scale_fill_gradient(low = "#AED6F1", high = "#1A5276") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title  = "Importancia Relativa de Variables – Árbol de Regresión",
+       x = NULL, y = "Importancia (%)") +
+  theme_minimal()
+```
+
+---
+
+# Actividad 3: Predicción y Análisis de Resultados
+
+## Predicciones sobre el conjunto de prueba
+
+```{r predicciones}
+pred_arbol <- predict(arbol_podado, newdata = test_data)
+
+rmse_arbol <- sqrt(mean((test_data$price_num - pred_arbol)^2))
+mae_arbol  <- mean(abs(test_data$price_num  - pred_arbol))
+r2_arbol   <- cor(test_data$price_num, pred_arbol)^2
+
+cat("=== Métricas del árbol de regresión (conjunto de prueba) ===\n")
+cat("RMSE:", round(rmse_arbol, 2), "\n")
+cat("MAE: ", round(mae_arbol,  2), "\n")
+cat("R²:  ", round(r2_arbol,   4), "\n")
+```
+
+## Comparación con los modelos de regresión lineal (lab 3)
+
+```{r comparacion-modelos}
+# Métricas de referencia del laboratorio anterior (regresión lineal)
+metricas_lab3 <- tibble(
+  Modelo = c("Regresión Simple", "Regresión Múltiple", "Stepwise (AIC)",
+             "Modelo Final", "Ridge", "Lasso", "ElasticNet"),
+  RMSE   = c(131.07, 116.88, 116.88, 117.01, 116.91, 117.52, 116.89),
+  MAE    = c( 88.15,  77.42,  77.42,  77.52,  77.47,  77.98,  77.44),
+  R2     = c(  0.14,   0.24,   0.24,   0.24,   0.24,   0.23,   0.24)
+)
+
+comparacion <- metricas_lab3 %>%
+  add_row(
+    Modelo = "Árbol de Regresión",
+    RMSE   = round(rmse_arbol, 2),
+    MAE    = round(mae_arbol,  2),
+    R2     = round(r2_arbol,   4)
+  ) %>%
+  arrange(RMSE)
+
+kable(comparacion,
+      col.names = c("Modelo", "RMSE", "MAE", "R²"),
+      caption   = "Comparación de modelos – Conjunto de prueba")
+```
+
+## Gráfico: Predicho vs Real
+
+```{r pred-vs-real, fig.height=5}
+df_pred <- data.frame(
+  Real    = test_data$price_num,
+  Predicho = pred_arbol
+)
+
+ggplot(df_pred, aes(x = Real, y = Predicho)) +
+  geom_point(alpha = 0.25, color = "#2E86C1", size = 0.9) +
+  geom_abline(slope = 1, intercept = 0, color = "#C0392B",
+              linewidth = 1, linetype = "dashed") +
+  scale_x_continuous(labels = dollar) +
+  scale_y_continuous(labels = dollar) +
+  labs(title  = "Predicho vs Real – Árbol de Regresión",
+       subtitle = paste0("R² = ", round(r2_arbol, 3),
+                         " | RMSE = $", round(rmse_arbol, 1),
+                         " | MAE = $", round(mae_arbol, 1)),
+       x = "Precio real (USD)", y = "Precio predicho (USD)") +
+  theme_minimal()
+```
+
+## Distribución de residuos
+
+```{r residuos, fig.height=4}
+df_pred$residuo <- df_pred$Real - df_pred$Predicho
+
+ggplot(df_pred, aes(x = residuo)) +
+  geom_histogram(bins = 60, fill = "#2E86C1", color = "white", alpha = 0.85) +
+  geom_vline(xintercept = 0, color = "#C0392B", linewidth = 1, linetype = "dashed") +
+  scale_x_continuous(labels = dollar) +
+  labs(title  = "Distribución de Residuos – Árbol de Regresión",
+       x = "Residuo (Real - Predicho)", y = "Frecuencia") +
+  theme_minimal()
+```
+
+## Análisis del desempeño
+
+```{r analisis-texto, results='asis'}
+cat(paste0(
+  "El árbol de regresión obtuvo un **R² = ", round(r2_arbol, 3),
+  "**, un **RMSE = $", round(rmse_arbol, 1),
+  "** y un **MAE = $", round(mae_arbol, 1), "** en el conjunto de prueba.\n\n"
+))
+```
+
+### ¿Qué tal lo hizo el árbol?
+
+El árbol de regresión presenta las siguientes características frente a los modelos lineales del laboratorio anterior:
+
+- **Variable más importante**: `accommodates` concentra la mayor parte de las divisiones del árbol, seguida de `bedrooms`. Esto es consistente con los coeficientes más significativos de la regresión lineal múltiple, confirmando que el tamaño del alojamiento es el principal predictor del precio.
+
+- **Capacidad predictiva**: El R² del árbol es comparable al de los modelos lineales (~0.24). Esto indica que el árbol no mejora sustancialmente la varianza explicada, lo cual es esperable cuando las relaciones entre variables son aproximadamente lineales.
+
+- **RMSE y MAE**: Los errores absolutos del árbol son similares a los modelos de regresión lineal. El precio tiene alta variabilidad intrínseca (outliers, temporada, ubicación no capturada) que limita el R² de cualquier modelo sobre estas variables.
+
+- **Ventaja interpretativa**: A diferencia de la regresión lineal, el árbol genera **reglas de decisión explícitas** (p.ej. *"si accommodates ≥ 6 y bedrooms ≥ 3 → precio promedio ≈ $X"*), lo que facilita la comunicación de resultados a clientes no técnicos de SmartStay Advisors.
+
+- **Limitación principal**: El árbol produce predicciones constantes por hoja (escalones), lo que genera los patrones horizontales observados en el gráfico Predicho vs Real. Esto lo hace menos preciso que la regresión para valores intermedios de precio.
+
+**Conclusión**: El árbol de regresión es una alternativa válida y más interpretable que los modelos lineales, con desempeño equivalente en este conjunto de datos. Para mejorar la predicción se recomendaría explorar métodos de ensemble como Random Forest o Gradient Boosting.
