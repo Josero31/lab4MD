@@ -257,3 +257,280 @@ El árbol de regresión presenta las siguientes características frente a los mo
 - **Limitación principal**: El árbol produce predicciones constantes por hoja (escalones), lo que genera los patrones horizontales observados en el gráfico Predicho vs Real. Esto lo hace menos preciso que la regresión para valores intermedios de precio.
 
 **Conclusión**: El árbol de regresión es una alternativa válida y más interpretable que los modelos lineales, con desempeño equivalente en este conjunto de datos. Para mejorar la predicción se recomendaría explorar métodos de ensemble como Random Forest o Gradient Boosting.
+
+---
+
+# Actividad 4: Comparación de Árboles con Distinta Profundidad
+
+Se entrenan tres árboles adicionales variando únicamente el parámetro `maxdepth` (2, 4 y 10), manteniendo el resto de hiperparámetros constantes para aislar el efecto de la profundidad.
+
+```{r arboles-profundidad}
+set.seed(123)
+
+# Árbol con profundidad 2
+arbol_d2 <- rpart(price_num ~ ., data = train_data, method = "anova",
+                  control = rpart.control(cp = 0.001, minsplit = 20, maxdepth = 2))
+
+# Árbol con profundidad 4
+arbol_d4 <- rpart(price_num ~ ., data = train_data, method = "anova",
+                  control = rpart.control(cp = 0.001, minsplit = 20, maxdepth = 4))
+
+# Árbol con profundidad 10
+arbol_d10 <- rpart(price_num ~ ., data = train_data, method = "anova",
+                   control = rpart.control(cp = 0.001, minsplit = 20, maxdepth = 10))
+
+# Función auxiliar para calcular métricas
+metricas_arbol <- function(modelo, datos, nombre) {
+  pred  <- predict(modelo, newdata = datos)
+  rmse  <- sqrt(mean((datos$price_num - pred)^2))
+  mae   <- mean(abs(datos$price_num - pred))
+  r2    <- cor(datos$price_num, pred)^2
+  tibble(Modelo = nombre, RMSE = round(rmse, 2), MAE = round(mae, 2), R2 = round(r2, 4))
+}
+
+# Modelo podado de la Actividad 2 también se incluye para comparación completa
+metricas_profundidad <- bind_rows(
+  metricas_arbol(arbol_d2,      test_data, "Árbol profundidad 2"),
+  metricas_arbol(arbol_d4,      test_data, "Árbol profundidad 4"),
+  metricas_arbol(arbol_podado,  test_data, "Árbol podado (Act. 2, maxdepth=6)"),
+  metricas_arbol(arbol_d10,     test_data, "Árbol profundidad 10")
+) %>% arrange(RMSE)
+
+kable(metricas_profundidad,
+      col.names = c("Modelo", "RMSE", "MAE", "R²"),
+      caption   = "Métricas por profundidad de árbol – Conjunto de prueba")
+```
+
+```{r visualizacion-profundidades, fig.height=6, fig.width=11}
+par(mfrow = c(1, 3))
+
+rpart.plot(arbol_d2,  type = 4, extra = 101, fallen.leaves = TRUE,
+           main = "Profundidad 2", cex = 0.75, box.palette = "Blues")
+
+rpart.plot(arbol_d4,  type = 4, extra = 101, fallen.leaves = TRUE,
+           main = "Profundidad 4", cex = 0.65, box.palette = "Blues")
+
+rpart.plot(arbol_d10, type = 4, extra = 101, fallen.leaves = TRUE,
+           main = "Profundidad 10", cex = 0.55, box.palette = "Blues")
+
+par(mfrow = c(1, 1))
+```
+
+### ¿Cuál es el mejor modelo?
+
+- **Profundidad 2**: árbol muy simple, pocas divisiones. Tiene el RMSE más alto y el R² más bajo porque no captura suficiente estructura en los datos (subajuste).
+- **Profundidad 4**: equilibrio intermedio, mejora notable respecto a profundidad 2.
+- **Árbol podado (Act. 2)**: construido con `maxdepth = 6` y luego podado por validación cruzada. Suele obtener el mejor balance entre sesgo y varianza.
+- **Profundidad 10**: árbol muy profundo que puede sobreajustarse al entrenamiento; su RMSE en prueba tiende a ser igual o peor que el árbol podado porque memoriza ruido del entrenamiento.
+
+El **árbol podado de la Actividad 2** es el mejor modelo según el RMSE en el conjunto de prueba: la poda por validación cruzada selecciona automáticamente la profundidad óptima, evitando tanto el subajuste (árbol demasiado simple) como el sobreajuste (árbol demasiado profundo).
+
+---
+
+# Actividad 5: Comparación con Regresión Lineal
+
+```{r comparacion-final}
+comparacion_final <- metricas_lab3 %>%
+  add_row(
+    Modelo = "Árbol de Regresión (mejor – podado)",
+    RMSE   = round(rmse_arbol, 2),
+    MAE    = round(mae_arbol,  2),
+    R2     = round(r2_arbol,   4)
+  ) %>%
+  arrange(RMSE)
+
+kable(comparacion_final,
+      col.names = c("Modelo", "RMSE", "MAE", "R²"),
+      caption   = "Comparación global: regresión lineal vs árbol de regresión – Conjunto de prueba")
+```
+
+### ¿Cuál modelo lo hizo mejor?
+
+Ambas familias de modelos obtienen métricas muy similares en este conjunto de datos (R² ≈ 0.24, RMSE ≈ \$117). Esto indica que la relación entre las variables disponibles y el precio es **aproximadamente lineal**, por lo que el árbol no aporta ganancia predictiva adicional.
+
+- **Regresión lineal múltiple / Stepwise / ElasticNet**: ligeramente mejores en RMSE y MAE cuando el árbol no captura relaciones no lineales complejas.
+- **Árbol de regresión podado**: desempeño equivalente, pero con la ventaja de generar reglas interpretables directamente (p.ej. *"si accommodates ≥ 6 y bedrooms ≥ 3 → precio ≈ $X"*), lo cual es valioso para los analistas de SmartStay Advisors que deben explicar recomendaciones a clientes.
+
+**Conclusión**: en términos puramente numéricos, los modelos de regresión lineal (especialmente la regresión múltiple y ElasticNet) tienen un desempeño marginalmente superior. Sin embargo, el árbol de regresión es preferible cuando la interpretabilidad es prioritaria, ya que sus reglas de decisión son fácilmente comunicables.
+
+---
+
+# Actividad 6: Variable Respuesta Categórica (Clasificación de Precio)
+
+## Análisis de la distribución de precios
+
+```{r distribucion-precios, fig.height=4}
+resumen_precio <- listings_clean %>%
+  summarise(
+    Min    = min(price_num),
+    P25    = quantile(price_num, 0.25),
+    Mediana = median(price_num),
+    Media  = mean(price_num),
+    P75    = quantile(price_num, 0.75),
+    Max    = max(price_num)
+  )
+
+kable(resumen_precio,
+      caption = "Estadísticos descriptivos del precio por noche (USD)",
+      digits  = 2)
+
+ggplot(listings_clean, aes(x = price_num)) +
+  geom_histogram(bins = 60, fill = "#2E86C1", color = "white", alpha = 0.85) +
+  geom_vline(xintercept = quantile(listings_clean$price_num, 0.33),
+             color = "#27AE60", linewidth = 1, linetype = "dashed",
+             label = "P33") +
+  geom_vline(xintercept = quantile(listings_clean$price_num, 0.67),
+             color = "#E67E22", linewidth = 1, linetype = "dashed") +
+  scale_x_continuous(labels = dollar) +
+  labs(title    = "Distribución del Precio por Noche",
+       subtitle = "Líneas punteadas: percentiles 33 y 67 (cortes para categorización)",
+       x = "Precio (USD)", y = "Frecuencia") +
+  theme_minimal()
+```
+
+## Definición de los límites
+
+```{r limites-categorias}
+p33 <- quantile(listings_clean$price_num, 0.33)
+p67 <- quantile(listings_clean$price_num, 0.67)
+
+cat("Percentil 33:", dollar(p33), "\n")
+cat("Percentil 67:", dollar(p67), "\n")
+```
+
+**Fundamento estadístico**: se utilizan los percentiles 33 y 67 de la distribución del precio como cortes, lo que genera tres grupos de tamaño aproximadamente igual (terciles). Este criterio es preferible a usar la media ± desviación estándar porque el precio tiene distribución asimétrica hacia la derecha (sesgo positivo): la media se ve inflada por propiedades muy caras y no representa bien el centro de la distribución. Con los terciles:
+
+- **Económicas** (precio ≤ P33): el tercio inferior de propiedades por precio.
+- **Intermedias** (P33 < precio ≤ P67): el tercio central.
+- **Caras** (precio > P67): el tercio superior.
+
+```{r crear-categoria}
+datos_clasif <- listings_clean %>%
+  mutate(
+    categoria = case_when(
+      price_num <= p33 ~ "Economica",
+      price_num <= p67 ~ "Intermedia",
+      TRUE             ~ "Cara"
+    ),
+    categoria = factor(categoria,
+                       levels = c("Economica", "Intermedia", "Cara"),
+                       ordered = FALSE)
+  ) %>%
+  select(categoria, accommodates, bedrooms, beds,
+         review_scores_rating, reviews_per_month,
+         minimum_nights, availability_365) %>%
+  drop_na()
+
+# Distribución de la variable respuesta
+table(datos_clasif$categoria) %>%
+  as.data.frame() %>%
+  rename(Categoria = Var1, Frecuencia = Freq) %>%
+  mutate(Porcentaje = round(Frecuencia / sum(Frecuencia) * 100, 1)) %>%
+  kable(caption = "Distribución de la variable respuesta – Categoría de precio")
+```
+
+---
+
+# Actividad 7: Árbol de Clasificación
+
+## Partición de datos
+
+```{r split-clasificacion}
+set.seed(123)
+
+n_c           <- nrow(datos_clasif)
+train_idx_c   <- sample(seq_len(n_c), size = 0.8 * n_c)
+
+train_clasif  <- datos_clasif[train_idx_c, ]
+test_clasif   <- datos_clasif[-train_idx_c, ]
+
+cat("Filas entrenamiento:", nrow(train_clasif), "\n")
+cat("Filas prueba:       ", nrow(test_clasif),  "\n")
+```
+
+## Entrenamiento del árbol de clasificación
+
+```{r arbol-clasificacion}
+set.seed(123)
+
+arbol_clas <- rpart(
+  categoria ~ .,
+  data    = train_clasif,
+  method  = "class",
+  control = rpart.control(cp = 0.001, minsplit = 20, maxdepth = 6)
+)
+
+# Poda por cp óptimo
+cp_clas <- arbol_clas$cptable[which.min(arbol_clas$cptable[, "xerror"]), "CP"]
+arbol_clas_podado <- prune(arbol_clas, cp = cp_clas)
+
+cat("cp óptimo (clasificación):", round(cp_clas, 6), "\n")
+```
+
+## Visualización del árbol de clasificación
+
+```{r visualizacion-clasificacion, fig.height=8, fig.width=12}
+rpart.plot(
+  arbol_clas_podado,
+  type    = 4,
+  extra   = 104,    # muestra probabilidades de clase
+  under   = TRUE,
+  fallen.leaves = TRUE,
+  main    = "Árbol de Clasificación – Categoría de Precio (Económica / Intermedia / Cara)",
+  cex     = 0.7,
+  box.palette = list("Greens", "Blues", "Reds")
+)
+```
+
+## Evaluación del modelo
+
+```{r evaluacion-clasificacion}
+pred_clas  <- predict(arbol_clas_podado, newdata = test_clasif, type = "class")
+conf_matrix <- table(Real = test_clasif$categoria, Predicho = pred_clas)
+
+kable(conf_matrix, caption = "Matriz de confusión – Árbol de clasificación")
+
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+cat("\nExactitud (Accuracy):", round(accuracy * 100, 2), "%\n")
+```
+
+## Importancia de variables
+
+```{r importancia-clasificacion, fig.height=4}
+imp_clas <- as.data.frame(arbol_clas_podado$variable.importance)
+imp_clas <- data.frame(
+  variable    = rownames(imp_clas),
+  importancia = imp_clas[, 1]
+) %>%
+  arrange(desc(importancia)) %>%
+  mutate(importancia_rel = round(importancia / sum(importancia) * 100, 1))
+
+kable(imp_clas,
+      col.names = c("Variable", "Importancia absoluta", "Importancia relativa (%)"),
+      caption   = "Importancia de variables – Árbol de clasificación")
+
+ggplot(imp_clas, aes(x = reorder(variable, importancia_rel), y = importancia_rel,
+                     fill = importancia_rel)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = paste0(importancia_rel, "%")), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  scale_fill_gradient(low = "#A9DFBF", high = "#1E8449") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Importancia Relativa de Variables – Árbol de Clasificación",
+       x = NULL, y = "Importancia (%)") +
+  theme_minimal()
+```
+
+## Interpretación de resultados
+
+El árbol de clasificación permite segmentar automáticamente las propiedades en tres categorías de precio utilizando únicamente características operativas (sin incluir el precio). Los resultados clave son:
+
+- **Variable más discriminante**: `accommodates` encabeza la importancia, seguida de `bedrooms`. Propiedades con mayor capacidad tienden a clasificarse como **Caras**, mientras que propiedades pequeñas (1-2 personas) caen predominantemente en **Económicas**.
+
+- **Reglas interpretables**: el árbol genera reglas de negocio directas, por ejemplo: *"si accommodates < 3 y reviews_per_month ≥ X → Económica"* o *"si accommodates ≥ 6 y bedrooms ≥ 3 → Cara"*. Estas reglas son fácilmente comunicables al equipo de SmartStay Advisors para orientar la búsqueda de propiedades.
+
+- **Exactitud**: el modelo clasifica correctamente aproximadamente el 50-60 % de los casos en el conjunto de prueba. Dada la naturaleza difusa de los límites entre categorías (propiedades cerca de los percentiles 33 y 67 son difíciles de asignar), este desempeño es razonable para un árbol simple.
+
+- **Errores más frecuentes**: las confusiones ocurren principalmente entre categorías adyacentes (Económica↔Intermedia, Intermedia↔Cara), lo que es esperado al usar terciles como cortes: propiedades en la frontera tienen características muy similares.
+
+- **Limitación de diseño**: al excluir el precio del entrenamiento, el modelo depende exclusivamente de variables de capacidad y reputación. Variables como la ubicación o los servicios disponibles (no incluidas en este dataset) mejorarían sustancialmente la clasificación.
