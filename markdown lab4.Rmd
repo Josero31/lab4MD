@@ -598,3 +598,49 @@ Confundir Económica con Cara sería el error más grave, pero ocurre rara vez.
 
 Conclusión: El modelo comete errores principalmente entre clases cercanas, lo cual indica que está capturando correctamente la estructura general de los datos.
 
+# Actividad 10: Validación cruzada
+```{r}
+library(caret)
+set.seed(123)
+
+control <- trainControl(method = "cv", number = 10)
+
+modelo_cv <- train(
+  categoria ~ .,
+  data = train_clasif,
+  method = "rpart",
+  trControl = control,
+  tuneLength = 10
+)
+
+# Mejor modelo
+modelo_cv$bestTune
+
+pred_cv <- predict(modelo_cv, newdata = test_clasif)
+
+conf_matrix_cv <- table(Real = test_clasif$categoria, Predicho = pred_cv)
+
+kable(conf_matrix_cv, caption = "Matriz de confusión – Modelo con validación cruzada")
+
+accuracy_cv <- sum(diag(conf_matrix_cv)) / sum(conf_matrix_cv)
+
+cat("Accuracy (CV):", round(accuracy_cv * 100, 2), "%\n")
+
+comparacion_clasif <- tibble(
+  Modelo = c("Árbol original", "Árbol con validación cruzada"),
+  Accuracy = c(round(accuracy, 4), round(accuracy_cv, 4))
+)
+
+kable(comparacion_clasif, caption = "Comparación de modelos de clasificación")
+```
+
+El modelo entrenado con validación cruzada permite seleccionar automáticamente los mejores hiperparámetros (especialmente cp), reduciendo el riesgo de sobreajuste.
+ 
+Si accuracy_cv > accuracy original: El modelo mejora y generaliza mejor.
+
+Si son similares: El modelo original ya estaba bien ajustado.
+
+Si accuracy_cv < original: Puede haber ligera variabilidad, pero el modelo con validación cruzada sigue siendo más robusto.
+
+Conclusión: La validación cruzada proporciona un modelo más confiable para producción, ya que su desempeño está validado en múltiples particiones del conjunto de entrenamiento.
+
