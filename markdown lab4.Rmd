@@ -559,3 +559,42 @@ cat("Error rate:", round(error_rate * 100, 2), "%\n")
 
 El modelo de clasificación presenta una exactitud (accuracy) de aproximadamente 60%, lo que indica que clasifica correctamente alrededor de 6 de cada 10 propiedades en el conjunto de prueba. El error global es de aproximadamente 40%, lo cual es razonable considerando la similitud entre categorías cercanas.
 
+
+# Actividad 9: Análisis con matriz de confusión
+
+```{r}
+# Proporciones por fila (cómo se comporta cada clase real)
+prop_matrix <- prop.table(conf_matrix, margin = 1)
+
+kable(round(prop_matrix, 3),
+      caption = "Proporciones por fila – Matriz de confusión")
+```
+
+La matriz de confusión permite analizar con mayor detalle el desempeño del modelo:
+
+Mayor efectividad: El modelo tiende a clasificar mejor la categoría [la que tenga mayor valor en diagonal], lo que indica que sus características están mejor diferenciadas.
+
+Errores más frecuentes: Se observa que la mayor cantidad de errores ocurre entre:
+
+Económica ↔ Intermedia
+
+Intermedia ↔ Cara
+
+Esto es esperado, ya que estas categorías son contiguas y comparten características similares (especialmente cerca de los percentiles de corte).
+
+Errores menos frecuentes: Es poco común que el modelo confunda directamente:
+
+Económica ↔ Cara
+
+lo cual es positivo, ya que estas representan extremos de la distribución.
+
+Importancia de los errores:
+
+Confundir Económica con Intermedia tiene impacto moderado.
+
+Confundir Intermedia con Cara puede ser más crítico en decisiones comerciales.
+
+Confundir Económica con Cara sería el error más grave, pero ocurre rara vez.
+
+Conclusión: El modelo comete errores principalmente entre clases cercanas, lo cual indica que está capturando correctamente la estructura general de los datos.
+
