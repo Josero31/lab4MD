@@ -534,3 +534,28 @@ El árbol de clasificación permite segmentar automáticamente las propiedades e
 - **Errores más frecuentes**: las confusiones ocurren principalmente entre categorías adyacentes (Económica↔Intermedia, Intermedia↔Cara), lo que es esperado al usar terciles como cortes: propiedades en la frontera tienen características muy similares.
 
 - **Limitación de diseño**: al excluir el precio del entrenamiento, el modelo depende exclusivamente de variables de capacidad y reputación. Variables como la ubicación o los servicios disponibles (no incluidas en este dataset) mejorarían sustancialmente la clasificación.
+
+
+# Actividad 8: Evaluación en conjunto de prueba (eficiencia)
+
+```{r}
+# Predicciones (ya lo tienen, pero lo repetimos ordenado)
+pred_clas  <- predict(arbol_clas_podado, newdata = test_clasif, type = "class")
+
+# Matriz de confusión
+conf_matrix <- table(Real = test_clasif$categoria, Predicho = pred_clas)
+
+kable(conf_matrix, caption = "Matriz de confusión – Árbol de clasificación")
+
+# Accuracy
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+
+# Error rate
+error_rate <- 1 - accuracy
+
+cat("Accuracy:", round(accuracy * 100, 2), "%\n")
+cat("Error rate:", round(error_rate * 100, 2), "%\n")
+```
+
+El modelo de clasificación presenta una exactitud (accuracy) de aproximadamente 60%, lo que indica que clasifica correctamente alrededor de 6 de cada 10 propiedades en el conjunto de prueba. El error global es de aproximadamente 40%, lo cual es razonable considerando la similitud entre categorías cercanas.
+
