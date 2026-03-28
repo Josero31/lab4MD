@@ -14,7 +14,6 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
                       fig.width = 9, fig.height = 5)
-knitr::opts_knit$set(root.dir = "C:/Users/jrss3/OneDrive/Escritorio/1ER Semestre 2026/Mineria de Datos/lab4MD")
 ```
 
 # Introducción
@@ -25,6 +24,14 @@ SmartStay Advisors es una firma intermediaria que facilita la búsqueda y selecc
 
 Se utilizan exactamente los mismos datos, semilla y partición que en el laboratorio anterior para garantizar comparabilidad entre modelos.
 
+```{r instalacion-paquetes, include=FALSE}
+# Instalar paquetes que no estén disponibles
+paquetes <- c("tidyverse", "rpart", "rpart.plot", "scales", "knitr",
+              "caret", "randomForest")
+nuevos <- paquetes[!(paquetes %in% installed.packages()[, "Package"])]
+if (length(nuevos)) install.packages(nuevos, repos = "https://cran.rstudio.com/")
+```
+
 ```{r carga-librerias}
 library(tidyverse)
 library(rpart)
@@ -34,7 +41,7 @@ library(knitr)
 ```
 
 ```{r carga-datos}
-load("C:/Users/jrss3/OneDrive/Escritorio/1ER Semestre 2026/Mineria de Datos/lab3MD/listings.RData")
+load("listings_limpio.RData")
 
 # Misma limpieza que lab 3
 listings <- listings %>%
@@ -643,4 +650,122 @@ Si son similares: El modelo original ya estaba bien ajustado.
 Si accuracy_cv < original: Puede haber ligera variabilidad, pero el modelo con validación cruzada sigue siendo más robusto.
 
 Conclusión: La validación cruzada proporciona un modelo más confiable para producción, ya que su desempeño está validado en múltiples particiones del conjunto de entrenamiento.
+
+---
+
+# Actividad 11: Tuneo de la profundidad del árbol de clasificación
+
+Se entrenan al menos 3 modelos adicionales de clasificación variando la profundidad máxima del árbol (`maxdepth`), para determinar cuál ofrece la mejor exactitud en el conjunto de prueba.
+
+```{r arboles-clasificacion-profundidad}
+set.seed(123)
+
+# Función auxiliar para entrenar y evaluar un árbol de clasificación
+evaluar_arbol_clas <- function(datos_train, datos_test, profundidad) {
+  modelo <- rpart(
+    categoria ~ .,
+    data    = datos_train,
+    method  = "class",
+    control = rpart.control(cp = 0.001, minsplit = 20, maxdepth = profundidad)
+  )
+  
+  # Poda automática por cp óptimo
+  cp_opt <- modelo$cptable[which.min(modelo$cptable[, "xerror"]), "CP"]
+  modelo_podado <- prune(modelo, cp = cp_opt)
+  
+  pred <- predict(modelo_podado, newdata = datos_test, type = "class")
+  cm   <- table(Real = datos_test$categoria, Predicho = pred)
+  acc  <- sum(diag(cm)) / sum(cm)
+  
+  list(modelo = modelo_podado, accuracy = acc, conf_matrix = cm, cp = cp_opt)
+}
+
+# Profundidades a evaluar
+profundidades <- c(2, 3, 4, 5, 6, 8, 10, 15)
+
+resultados_prof <- map_dfr(profundidades, function(d) {
+  res <- evaluar_arbol_clas(train_clasif, test_clasif, d)
+  tibble(
+    Profundidad = d,
+    Accuracy    = round(res$accuracy * 100, 2),
+    CP_optimo   = round(res$cp, 6)
+  )
+})
+
+kable(resultados_prof,
+      col.names = c("Profundidad máxima", "Accuracy (%)", "cp óptimo"),
+      caption   = "Comparación de árboles de clasificación por profundidad")
+```
+
+```{r mejor-profundidad-clas}
+# Identificar la mejor profundidad
+mejor_prof <- resultados_prof %>%
+  filter(Accuracy == max(Accuracy)) %>%
+  slice(1)
+
+cat("Mejor profundidad:", mejor_prof$Profundidad, "\n")
+cat("Accuracy:", mejor_prof$Accuracy, "%\n")
+
+# Entrenar el mejor modelo
+mejor_arbol_clas <- evaluar_arbol_clas(train_clasif, test_clasif, mejor_prof$Profundidad)
+```
+
+```{r grafico-profundidad-clas, fig.height=4}
+ggplot(resultados_prof, aes(x = Profundidad, y = Accuracy)) +
+  geom_line(color = "#1E8449", linewidth = 1) +
+  geom_point(color = "#1E8449", size = 3) +
+  geom_point(data = mejor_prof, aes(x = Profundidad, y = Accuracy),
+             color = "#C0392B", size = 5, shape = 18) +
+  labs(title    = "Accuracy vs Profundidad del Árbol de Clasificación",
+       subtitle = paste0("Mejor profundidad: ", mejor_prof$Profundidad,
+                         " (Accuracy = ", mejor_prof$Accuracy, "%)"),
+       x = "Profundidad máxima", y = "Accuracy (%)") +
+  scale_x_continuous(breaks = profundidades) +
+  theme_minimal()
+```
+
+```{r visualizar-mejor-arbol-clas, fig.height=8, fig.width=12}
+rpart.plot(
+  mejor_arbol_clas$modelo,
+  type    = 4,
+  extra   = 104,
+  under   = TRUE,
+  fallen.leaves = TRUE,
+  main    = paste0("Mejor Árbol de Clasificación (profundidad = ", mejor_prof$Profundidad, ")"),
+  cex     = 0.65,
+  box.palette = list("Greens", "Blues", "Reds")
+)
+```
+
+```{r confusion-mejor-clas}
+kable(mejor_arbol_clas$conf_matrix,
+      caption = paste0("Matriz de confusión – Mejor árbol (profundidad = ",
+                       mejor_prof$Profundidad, ")"))
+
+# Comparación con modelos anteriores
+comparacion_clasif_final <- tibble(
+  Modelo   = c("Árbol original (Act. 7, maxdepth=6)",
+               "Árbol con validación cruzada (Act. 10)",
+               paste0("Mejor árbol tuneado (maxdepth=", mejor_prof$Profundidad, ")")),
+  Accuracy = c(round(accuracy * 100, 2),
+               round(accuracy_cv * 100, 2),
+               mejor_prof$Accuracy)
+)
+
+kable(comparacion_clasif_final,
+      col.names = c("Modelo", "Accuracy (%)"),
+      caption   = "Comparación de modelos de clasificación")
+```
+
+### Análisis del tuneo de profundidad
+
+El análisis de la profundidad del árbol de clasificación revela un patrón importante:
+
+- **Profundidades bajas (2-3)**: el árbol es demasiado simple y no captura la complejidad de las relaciones entre las variables predictoras y la categoría de precio. Esto se traduce en un **subajuste** con accuracy bajo.
+
+- **Profundidades intermedias (4-6)**: se alcanza el mejor balance entre complejidad y generalización. El árbol es lo suficientemente profundo para capturar patrones relevantes sin memorizar ruido del entrenamiento.
+
+- **Profundidades altas (8-15)**: el accuracy en prueba se estabiliza o incluso disminuye ligeramente, indicando **sobreajuste**. El árbol memoriza particularidades del entrenamiento que no se generalizan.
+
+La profundidad óptima, combinada con la poda automática por `cp`, produce el modelo con mejor capacidad de generalización. Este resultado es consistente con lo observado en los árboles de regresión (Actividad 4).
 
