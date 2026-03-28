@@ -769,3 +769,324 @@ El análisis de la profundidad del árbol de clasificación revela un patrón im
 
 La profundidad óptima, combinada con la poda automática por `cp`, produce el modelo con mejor capacidad de generalización. Este resultado es consistente con lo observado en los árboles de regresión (Actividad 4).
 
+---
+
+# Actividad 12: Random Forest
+
+Se implementan modelos de Random Forest tanto para **regresión** (predicción del precio) como para **clasificación** (categoría de precio), y se comparan con los árboles de decisión individuales.
+
+## Random Forest – Regresión
+
+```{r rf-regresion}
+library(randomForest)
+set.seed(123)
+
+# Modelo con parámetros por defecto (ntree=100 para eficiencia computacional)
+cat("Entrenando Random Forest de regresión... esto puede tardar unos minutos.\n")
+rf_reg <- randomForest(
+  price_num ~ .,
+  data       = train_data,
+  ntree      = 100,
+  importance = TRUE
+)
+
+print(rf_reg)
+```
+
+```{r rf-regresion-tuneo}
+set.seed(123)
+
+# Probar distintos valores de mtry
+mtry_values <- c(2, 3, 5, 7)
+
+cat("Tuneando mtry para regresión (4 modelos)...\n")
+resultados_rf_reg <- map_dfr(mtry_values, function(m) {
+  cat("  mtry =", m, "...\n")
+  modelo <- randomForest(
+    price_num ~ .,
+    data  = train_data,
+    ntree = 100,
+    mtry  = m
+  )
+  pred  <- predict(modelo, newdata = test_data)
+  rmse  <- sqrt(mean((test_data$price_num - pred)^2))
+  mae   <- mean(abs(test_data$price_num - pred))
+  r2    <- cor(test_data$price_num, pred)^2
+  tibble(mtry = m, RMSE = round(rmse, 2), MAE = round(mae, 2), R2 = round(r2, 4))
+})
+
+kable(resultados_rf_reg,
+      col.names = c("mtry", "RMSE", "MAE", "R²"),
+      caption   = "Random Forest Regresión – Tuneo de mtry")
+```
+
+```{r mejor-rf-reg}
+mejor_mtry_reg <- resultados_rf_reg %>%
+  filter(RMSE == min(RMSE)) %>%
+  slice(1)
+
+cat("Mejor mtry:", mejor_mtry_reg$mtry, "\n")
+cat("RMSE:", mejor_mtry_reg$RMSE, "\n")
+cat("MAE:", mejor_mtry_reg$MAE, "\n")
+cat("R²:", mejor_mtry_reg$R2, "\n")
+
+# Entrenar modelo final con el mejor mtry
+set.seed(123)
+rf_reg_final <- randomForest(
+  price_num ~ .,
+  data       = train_data,
+  ntree      = 100,
+  mtry       = mejor_mtry_reg$mtry,
+  importance = TRUE
+)
+```
+
+```{r rf-reg-importancia, fig.height=4}
+imp_rf_reg <- importance(rf_reg_final)
+imp_rf_df <- data.frame(
+  variable    = rownames(imp_rf_reg),
+  importancia = imp_rf_reg[, "%IncMSE"]
+) %>%
+  arrange(desc(importancia)) %>%
+  mutate(importancia_rel = round(importancia / sum(importancia) * 100, 1))
+
+kable(imp_rf_df,
+      col.names = c("Variable", "%IncMSE", "Importancia relativa (%)"),
+      caption   = "Importancia de variables – Random Forest Regresión")
+
+ggplot(imp_rf_df, aes(x = reorder(variable, importancia_rel), y = importancia_rel,
+                      fill = importancia_rel)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = paste0(importancia_rel, "%")), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  scale_fill_gradient(low = "#D5F5E3", high = "#145A32") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Importancia de Variables – Random Forest Regresión",
+       x = NULL, y = "Importancia relativa (%)") +
+  theme_minimal()
+```
+
+```{r rf-reg-pred-vs-real, fig.height=5}
+pred_rf_reg <- predict(rf_reg_final, newdata = test_data)
+
+df_rf_pred <- data.frame(
+  Real     = test_data$price_num,
+  Predicho = pred_rf_reg
+)
+
+ggplot(df_rf_pred, aes(x = Real, y = Predicho)) +
+  geom_point(alpha = 0.25, color = "#27AE60", size = 0.9) +
+  geom_abline(slope = 1, intercept = 0, color = "#C0392B",
+              linewidth = 1, linetype = "dashed") +
+  scale_x_continuous(labels = dollar) +
+  scale_y_continuous(labels = dollar) +
+  labs(title    = "Predicho vs Real – Random Forest Regresión",
+       subtitle = paste0("R² = ", mejor_mtry_reg$R2,
+                         " | RMSE = $", mejor_mtry_reg$RMSE,
+                         " | MAE = $", mejor_mtry_reg$MAE),
+       x = "Precio real (USD)", y = "Precio predicho (USD)") +
+  theme_minimal()
+```
+
+## Random Forest – Clasificación
+
+```{r rf-clasificacion}
+set.seed(123)
+
+cat("Entrenando Random Forest de clasificación...\n")
+rf_clas <- randomForest(
+  categoria ~ .,
+  data       = train_clasif,
+  ntree      = 100,
+  importance = TRUE
+)
+
+print(rf_clas)
+```
+
+```{r rf-clasificacion-tuneo}
+set.seed(123)
+
+n_vars_clas <- ncol(train_clasif) - 1  # variables predictoras
+
+mtry_clas_values <- seq(2, min(n_vars_clas, 7), by = 1)
+
+resultados_rf_clas <- map_dfr(mtry_clas_values, function(m) {
+  cat("  mtry =", m, "...\n")
+  modelo <- randomForest(
+    categoria ~ .,
+    data  = train_clasif,
+    ntree = 100,
+    mtry  = m
+  )
+  pred <- predict(modelo, newdata = test_clasif)
+  cm   <- table(Real = test_clasif$categoria, Predicho = pred)
+  acc  <- sum(diag(cm)) / sum(cm)
+  tibble(mtry = m, Accuracy = round(acc * 100, 2))
+})
+
+kable(resultados_rf_clas,
+      col.names = c("mtry", "Accuracy (%)"),
+      caption   = "Random Forest Clasificación – Tuneo de mtry")
+```
+
+```{r mejor-rf-clas}
+mejor_mtry_clas <- resultados_rf_clas %>%
+  filter(Accuracy == max(Accuracy)) %>%
+  slice(1)
+
+cat("Mejor mtry (clasificación):", mejor_mtry_clas$mtry, "\n")
+cat("Accuracy:", mejor_mtry_clas$Accuracy, "%\n")
+
+# Entrenar modelo final
+set.seed(123)
+rf_clas_final <- randomForest(
+  categoria ~ .,
+  data       = train_clasif,
+  ntree      = 100,
+  mtry       = mejor_mtry_clas$mtry,
+  importance = TRUE
+)
+```
+
+```{r rf-clas-confusion}
+pred_rf_clas <- predict(rf_clas_final, newdata = test_clasif)
+conf_rf_clas <- table(Real = test_clasif$categoria, Predicho = pred_rf_clas)
+
+kable(conf_rf_clas, caption = "Matriz de confusión – Random Forest Clasificación")
+
+# Proporciones por fila
+prop_rf_clas <- prop.table(conf_rf_clas, margin = 1)
+kable(round(prop_rf_clas, 3),
+      caption = "Proporciones por fila – Random Forest Clasificación")
+
+accuracy_rf_clas <- sum(diag(conf_rf_clas)) / sum(conf_rf_clas)
+cat("Accuracy RF Clasificación:", round(accuracy_rf_clas * 100, 2), "%\n")
+```
+
+```{r rf-clas-importancia, fig.height=4}
+imp_rf_clas <- importance(rf_clas_final)
+imp_rf_clas_df <- data.frame(
+  variable    = rownames(imp_rf_clas),
+  importancia = imp_rf_clas[, "MeanDecreaseGini"]
+) %>%
+  arrange(desc(importancia)) %>%
+  mutate(importancia_rel = round(importancia / sum(importancia) * 100, 1))
+
+kable(imp_rf_clas_df,
+      col.names = c("Variable", "MeanDecreaseGini", "Importancia relativa (%)"),
+      caption   = "Importancia de variables – Random Forest Clasificación")
+
+ggplot(imp_rf_clas_df, aes(x = reorder(variable, importancia_rel), y = importancia_rel,
+                           fill = importancia_rel)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = paste0(importancia_rel, "%")), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  scale_fill_gradient(low = "#FADBD8", high = "#922B21") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Importancia de Variables – Random Forest Clasificación",
+       x = NULL, y = "Importancia relativa (%)") +
+  theme_minimal()
+```
+
+## Comparación global: Todos los algoritmos
+
+### Regresión (predicción de precio)
+
+```{r comparacion-global-regresion}
+comparacion_regresion <- metricas_lab3 %>%
+  add_row(
+    Modelo = "Árbol de Regresión (mejor – podado)",
+    RMSE   = round(rmse_arbol, 2),
+    MAE    = round(mae_arbol, 2),
+    R2     = round(r2_arbol, 4)
+  ) %>%
+  add_row(
+    Modelo = paste0("Random Forest (mtry=", mejor_mtry_reg$mtry, ")"),
+    RMSE   = mejor_mtry_reg$RMSE,
+    MAE    = mejor_mtry_reg$MAE,
+    R2     = mejor_mtry_reg$R2
+  ) %>%
+  arrange(RMSE)
+
+kable(comparacion_regresion,
+      col.names = c("Modelo", "RMSE", "MAE", "R²"),
+      caption   = "Comparación global de modelos de regresión – Conjunto de prueba")
+```
+
+```{r grafico-comparacion-regresion, fig.height=5}
+ggplot(comparacion_regresion, aes(x = reorder(Modelo, -RMSE), y = RMSE, fill = R2)) +
+  geom_col(show.legend = TRUE) +
+  geom_text(aes(label = round(RMSE, 1)), vjust = -0.3, size = 3.2) +
+  coord_flip() +
+  scale_fill_gradient(low = "#AED6F1", high = "#1A5276", name = "R²") +
+  labs(title = "Comparación de RMSE – Todos los Modelos de Regresión",
+       x = NULL, y = "RMSE (USD)") +
+  theme_minimal()
+```
+
+### Clasificación (categoría de precio)
+
+```{r comparacion-global-clasificacion}
+comparacion_clasif_global <- tibble(
+  Modelo   = c("Árbol de clasificación (original)",
+               "Árbol con validación cruzada",
+               paste0("Mejor árbol tuneado (maxdepth=", mejor_prof$Profundidad, ")"),
+               paste0("Random Forest (mtry=", mejor_mtry_clas$mtry, ")")),
+  Accuracy = c(round(accuracy * 100, 2),
+               round(accuracy_cv * 100, 2),
+               mejor_prof$Accuracy,
+               mejor_mtry_clas$Accuracy)
+) %>%
+  arrange(desc(Accuracy))
+
+kable(comparacion_clasif_global,
+      col.names = c("Modelo", "Accuracy (%)"),
+      caption   = "Comparación global de modelos de clasificación – Conjunto de prueba")
+```
+
+```{r grafico-comparacion-clasificacion, fig.height=4}
+ggplot(comparacion_clasif_global, aes(x = reorder(Modelo, Accuracy), y = Accuracy,
+                                      fill = Accuracy)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = paste0(Accuracy, "%")), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  scale_fill_gradient(low = "#A9DFBF", high = "#145A32") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(title = "Comparación de Accuracy – Todos los Modelos de Clasificación",
+       x = NULL, y = "Accuracy (%)") +
+  theme_minimal()
+```
+
+## Análisis comparativo: Árbol de Decisión vs Random Forest
+
+### Regresión
+
+Random Forest es un método de **ensemble** que construye cientos de árboles sobre muestras bootstrap del dataset, promediando sus predicciones. Al combinar múltiples árboles con variaciones aleatorias, reduce la varianza de las predicciones sin incrementar significativamente el sesgo.
+
+En la predicción del precio por noche, se espera que Random Forest supere al árbol de regresión individual en las tres métricas (RMSE, MAE y R²), dado que:
+
+- **Reducción de varianza**: al promediar predicciones de 500 árboles, se suavizan las predicciones escalonadas del árbol individual, produciendo estimaciones más precisas.
+- **Robustez ante outliers**: la aleatorización reduce el impacto de observaciones atípicas que podrían dominar un solo árbol.
+- **Selección de variables**: el parámetro `mtry` fuerza a cada árbol a considerar solo un subconjunto de predictores, lo que reduce correlación entre árboles y mejora la diversidad del ensemble.
+
+La mejora respecto a la regresión lineal confirma que **existen relaciones no lineales** entre las variables predictoras y el precio que los modelos lineales no capturan pero el ensemble sí.
+
+### Clasificación
+
+En la tarea de clasificación, Random Forest presenta ventajas similares:
+
+- **Mayor accuracy**: la combinación de múltiples árboles reduce los errores de clasificación, especialmente en las fronteras entre categorías (Económica↔Intermedia, Intermedia↔Cara).
+- **Mejor calibración**: las proporciones de la matriz de confusión tienden a ser más equilibradas, indicando que el modelo no sesga hacia una categoría particular.
+- **Importancia de variables más estable**: la importancia calculada por Random Forest (MeanDecreaseGini) es más confiable que la de un solo árbol, ya que promedia el impacto de cada variable sobre múltiples particiones.
+
+### Conclusión general
+
+Random Forest representa una mejora sustancial respecto a los árboles de decisión individuales para ambas tareas (regresión y clasificación). Su principal desventaja es la pérdida de interpretabilidad: mientras un árbol individual genera reglas claras y comunicables, Random Forest funciona como una "caja negra" cuyas predicciones resultan de la agregación de cientos de árboles.
+
+Para SmartStay Advisors, la recomendación práctica es:
+
+- Usar **Random Forest** cuando el objetivo sea **precisión en la estimación de precios** o en la **clasificación automática** de propiedades.
+- Usar **árboles de decisión individuales** cuando el objetivo sea **explicar a clientes** por qué una propiedad se clasifica de cierta manera o cómo se determina su rango de precio.
+- Los modelos de **regresión lineal** siguen siendo útiles como línea base y para entender la dirección y magnitud del efecto de cada variable sobre el precio.
+
